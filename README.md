@@ -85,3 +85,14 @@ FROM (
     FROM ecommerce_orders
     GROUP BY InvoiceNo
 ) t;
+
+
+
+data quality validation and findings
+
+
+Duplicate record check:
+Duplicate invoice–product combinations were detected and flagged for further business review, as duplicates may represent legitimate split quantities or data inconsistencies.
+
+invalid unit price check:
+A small number of records with zero or negative unit prices were detected and flagged as pricing anomalies.
