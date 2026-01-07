@@ -1,49 +1,74 @@
 import os
 import logging
-import urllib.parse
 import pandas as pd
-from sqlalchemy import create_engine
+import mysql.connector
 from dotenv import load_dotenv
 
 load_dotenv()
 
 def load_to_s3(df: pd.DataFrame, s3_path: str):
-  
     try:
         logging.info(f"Writing processed data to {s3_path}")
         df.to_csv(s3_path, index=False)
         logging.info("Success: Processed data written to S3")
     except Exception as e:
-        logging.error(f" S3 Upload Error: {e}")
+        logging.error(f"S3 Upload Error: {e}")
         raise
 
-def load_to_mysql(df: pd.DataFrame):
-    
-    user = os.getenv("DB_USER")
-    raw_password = os.getenv("DB_PASSWORD")
-    host = os.getenv("DB_HOST")
-    port = os.getenv("DB_PORT")
-    name = os.getenv("DB_NAME")
+def load_to_mysql(df):
+    if df.empty:
+        logging.info("No data to load into MySQL.")
+        return
 
-    safe_password = urllib.parse.quote_plus(raw_password) if raw_password else ""
+    cols = [
+        "InvoiceNo",
+        "StockCode",
+        "Description",
+        "Quantity",
+        "InvoiceDate",
+        "UnitPrice",
+        "Country",
+        "TotalPrice"
+    ]
 
-    db_url = f"mysql+mysqlconnector://{user}:{safe_password}@{host}:{port}/{name}"
-    
-    engine = create_engine(db_url, pool_pre_ping=True)
+    df = df[cols]  # 🚨 THIS IS MANDATORY
 
-    try:
-        logging.info("Loading data to MySQL...")
-        df.to_sql(
-            name='ecommerce_sales', 
-            con=engine, 
-            if_exists='append', 
-            index=False,
-            chunksize=1000  
-        )
-        logging.info("Success: Data successfully loaded to MySQL!")
-        
-    except Exception as e:
-        logging.error(f"Database Error: {e}")
-        raise
-    finally:
-        engine.dispose()
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+
+    cursor = conn.cursor()
+
+    insert_sql = """
+    INSERT INTO ecommerce_sales (
+    InvoiceNo,
+    StockCode,
+    Description,
+    Quantity,
+    InvoiceDate,
+    UnitPrice,
+    Country,
+    TotalPrice
+    )
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+    ON DUPLICATE KEY UPDATE
+    Quantity = VALUES(Quantity),
+    UnitPrice = VALUES(UnitPrice),
+    InvoiceDate = VALUES(InvoiceDate),
+    TotalPrice = VALUES(TotalPrice)
+    """
+
+
+    data = list(df.itertuples(index=False, name=None))
+
+    logging.info(f"Inserting {len(data)} records into MySQL...")
+
+    cursor.executemany(insert_sql, data)
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
